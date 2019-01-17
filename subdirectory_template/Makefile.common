@@ -1,0 +1,52 @@
+SHELL = /bin/bash
+
+# Define in including Makefile
+# R1_FASTQ =
+# R2_FASTQ =
+
+SCRIPTS = /raid1/discovery/SequencingRunProcessing/scripts
+
+PRIMERS_FASTA = /raid1/projects/CoveringPrimersSets/CGDBv1.0/PM-TTD-v1/dir_pe100_550/pool3/ctrl_and_pool_primers.fa
+
+.PHONY: grouped_reads
+
+primers_vs_reads.tsv: 
+	usearch -threads 10 -search_oligodb ${R1_FASTQ} -db ${PRIMERS_FASTA} -strand both -target_cov 1.0 -maxgaps 0 -id 0.83 \
+	-userout primers_vs_reads_R1.tsv -userfields "query+qstrand+qlo+qhi+ql+target+tstrand+tlo+thi+tl+mism+mid"
+
+	usearch -threads 10 -search_oligodb ${R2_FASTQ} -db ${PRIMERS_FASTA} -strand both -target_cov 1.0 -maxgaps 0 -id 0.83  \
+	-userout primers_vs_reads_R2.tsv -userfields "query+qstrand+qlo+qhi+ql+target+tstrand+tlo+thi+tl+mism+mid"
+
+	awk '{gsub("\n",""); printf "%s\tR1\n",$$0}' primers_vs_reads_R1.tsv > unsorted-$@
+	awk '{gsub("\n",""); printf "%s\tR2\n",$$0}' primers_vs_reads_R2.tsv >> unsorted-$@
+	awk '(NR%4==1){print substr($$0,2)}' ${R1_FASTQ} >> unsorted-$@
+	awk '(NR%4==1) {b=$$0; a=getline; printf "%s\t%s\tR1\n",b,$$a}' ${R1_FASTQ} | cut -b 2- >> unsorted-$@
+	awk '(NR%4==1) {b=$$0; a=getline; printf "%s\t%s\tR2\n",b,$$a}' ${R2_FASTQ} | cut -b 2- >> unsorted-$@
+	sort -k1,1 unsorted-$@ > $@
+	#rm primers_vs_reads_R1.tsv primers_vs_reads_R2.tsv unsorted-$@
+
+grouped_reads/summary.tsv: primers_vs_reads.tsv
+	-mkdir grouped_reads
+	-rm grouped_reads/*
+	${SCRIPTS}/groupReadsByPrimerPair.py $< grouped_reads $@
+
+
+
+
+
+
+uber_summary.tsv: 5_1-52568670/grouped_reads/summary.tsv 5_3-52567633/grouped_reads/summary.tsv 5_4_7-52571662/grouped_reads/summary.tsv 5_6-52573689/grouped_reads/summary.tsv \
+				  21_4-52569696/grouped_reads/summary.tsv 26_3-52572684/grouped_reads/summary.tsv 26_4-52571660/grouped_reads/summary.tsv 26_5-52577695/grouped_reads/summary.tsv
+	for f in $^; do \
+		d=`tail -n +5 $$f | wc -l`; \
+		echo $$f $$d ; \
+		tail -n +5 $$f | cut -f 1 > all_targets.txt ; \
+	done
+	sort all_targets.txt | uniq > all_targets_sorted.txt
+	cp all_targets_sorted.txt $@
+	for f in $^; do \
+		echo $$f ; \
+		join -e '0' -o auto -a1 -a2 -t $$'\t' -j 1 $@ <(tail -n +5 $$f | sort -k1,1) > added.txt ; \
+		mv added.txt $@ ; \
+	done
+	rm all_targets.txt
